@@ -25,6 +25,10 @@
 //default MQTT topic
 #define MQTT_PREFIX "esp-dsmr"
 
+#define HOME_ASSISTANT_DISCOVERY_PREFIX "homeassistant"
+
+#define MQTT_ONLY_SEND_NEW_VALUES true
+
 //for debugging, print info on serial
 #define DEBUG 1
 #define INFO  2

@@ -10,6 +10,7 @@ MQTTPublisher::MQTTPublisher(String clientId)
   _clientId = clientId;
   logger = Logger("MQTTPublisher");
   logger.debug("ClientId:" + _clientId);
+  client.setBufferSize(400); // increase buffer size for json
 }
 
 MQTTPublisher::~MQTTPublisher()
@@ -21,6 +22,11 @@ MQTTPublisher::~MQTTPublisher()
 String MQTTPublisher::getTopic(String name)
 {
   return String(MQTT_PREFIX) + '/' + _clientId + '/' + name;
+}
+
+String MQTTPublisher::getConfigTopic(String name)
+{
+  return HOME_ASSISTANT_DISCOVERY_PREFIX + "/sensor/" + String(MQTT_PREFIX) + "-" + _clientId + "/" + name;
 }
 
 bool MQTTPublisher::reconnect()
@@ -91,11 +97,21 @@ void MQTTPublisher::handle()
   }
 }
 
-bool MQTTPublisher::publishOnMQTT(String topicSuffix, String msg)
+bool MQTTPublisher::publishOnMQTT(String topic, String msg)
 {
-  String topic = getTopic(topicSuffix);
   logger.debug("Publish to '" + topic + "':" + msg);
   auto retVal =  client.publish(topic.c_str(), msg.c_str());
   yield();
   return retVal;
+}
+
+bool MQTTPublisher::publishJson(String topic, const JsonDocument& json)
+{
+  logger.debug("Publish json to '" + topic);
+  char buffer[400]; // max size
+  size_t size = serializeJson(json, buffer);
+  auto retval = client.publish(topic.c_str(), buffer, size);
+  logger.debug("retval:"+String(retval));
+  yield();
+  return retval;
 }

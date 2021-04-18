@@ -1,6 +1,7 @@
 #define MQTT_SOCKET_TIMEOUT 5
 #pragma once
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include <ESP8266WiFi.h>
 #include <vector>
 #include "PubSubClient.h"
@@ -24,7 +25,6 @@ class MQTTPublisher
     uint32_t lastUpdateMqtt; // last data send
    
     bool reconnect();
-    String getTopic(String name);
   public:
     MQTTPublisher(String clientId = String(ESP.getChipId(), HEX));
     ~MQTTPublisher();
@@ -34,4 +34,8 @@ class MQTTPublisher
 
     void handle();
     bool publishOnMQTT(String topic, String msg);
+    // bool publishJson(String topic, const StaticJsonDocument& json);
+    String getTopic(String name);
+    String getConfigTopic(String name);
+    bool publishJson(String topic, const JsonDocument& json);
 };

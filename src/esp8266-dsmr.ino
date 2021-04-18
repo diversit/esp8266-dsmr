@@ -1,9 +1,10 @@
 #include <WiFiManager.h>
 #include <Ticker.h>
 #include <EEPROM.h>
-#include "MQTTPublisher.h"
+#include <ArduinoJson.h>
 #include "Settings.h"
 #include "Logger.h"
+#include "MQTTPublisher.h"
 
 #define CONFIG_VERSION "VER01"
 #define CONFIG_START 32
@@ -15,7 +16,7 @@ typedef struct {
   String mqttPort;
   String mqttUser;
   String mqttPassword;
-  // bool haAutoDiscoveryEnabled;
+  bool haAutoDiscoveryEnabled;
 } AppConfig;
 
 typedef struct {
@@ -29,20 +30,29 @@ typedef struct {
     FLOAT,
     INT
   } valueType;
+
+  enum {
+    POWER,   // unit: kW
+    ENERGY,  // unit: kWh
+    CURRENT, // unit: A
+    VOLUME   // unit: m3
+  } deviceClass;
+
+  String lastValue;
   
 } Measurement;
 
-const Measurement measurements[] = {
+Measurement measurements[] = {
   { "version"                        , "1-3:0.2.8"  , 10, 12, Measurement::STRING },
   { "power/timestamp"                , "0-0:1.0.0"  , 10, 23, Measurement::STRING },
   { "power/device_id"                , "0-0:96.1.1" , 11, 45, Measurement::STRING },
-  { "power/power_consuption"         , "1-0:1.7.0"  , 10, 16, Measurement::FLOAT },
-  { "power/power_production"         , "1-0:2.7.0"  , 10, 16, Measurement::FLOAT },
-  { "power/total_consuption_low"     , "1-0:1.8.1"  , 10, 20, Measurement::FLOAT },
-  { "power/total_consuption_high"    , "1-0:1.8.2"  , 10, 20, Measurement::FLOAT },
-  { "power/total_production_low"     , "1-0:2.8.1"  , 10, 20, Measurement::FLOAT },
-  { "power/total_production_high"    , "1-0:2.8.2"  , 10, 20, Measurement::FLOAT },
-  { "gas/total"                      , "0-1:24.2.1" , 26, 35, Measurement::FLOAT },
+  { "power/power_consuption"         , "1-0:1.7.0"  , 10, 16, Measurement::FLOAT, Measurement::POWER },
+  { "power/power_production"         , "1-0:2.7.0"  , 10, 16, Measurement::FLOAT, Measurement::POWER },
+  { "power/total_consuption_low"     , "1-0:1.8.1"  , 10, 20, Measurement::FLOAT, Measurement::ENERGY },
+  { "power/total_consuption_high"    , "1-0:1.8.2"  , 10, 20, Measurement::FLOAT, Measurement::ENERGY },
+  { "power/total_production_low"     , "1-0:2.8.1"  , 10, 20, Measurement::FLOAT, Measurement::ENERGY },
+  { "power/total_production_high"    , "1-0:2.8.2"  , 10, 20, Measurement::FLOAT, Measurement::ENERGY },
+  { "gas/total"                      , "0-1:24.2.1" , 26, 35, Measurement::FLOAT, Measurement::VOLUME },
   { "power/power_tariff"             , "0-0:96.14.0", 12, 16, Measurement::INT},
   // Additional properties as available on Kaifa 304
   // specs: https://www.netbeheernederland.nl/_upload/Files/Slimme_meter_15_a727fce1f1.pdf
@@ -55,15 +65,15 @@ const Measurement measurements[] = {
   { "power/phase_1/short_power_peaks", "1-0:32.36.0", 12, 17, Measurement::INT },
   { "power/phase_2/short_power_peaks", "1-0:52.36.0", 12, 17, Measurement::INT },
   { "power/phase_3/short_power_peaks", "1-0:72.36.0", 12, 17, Measurement::INT },
-  { "power/phase_1/instant_current"  , "1-0:31.7.0" , 11, 14, Measurement::INT },
-  { "power/phase_2/instant_current"  , "1-0:51.7.0" , 11, 14, Measurement::INT },
-  { "power/phase_3/instant_current"  , "1-0:71.7.0" , 11, 14, Measurement::INT },
-  { "power/phase_1/instant_usage"    , "1-0:21.7.0" , 11, 17, Measurement::FLOAT },
-  { "power/phase_2/instant_usage"    , "1-0:41.7.0" , 11, 17, Measurement::FLOAT },
-  { "power/phase_3/instant_usage"    , "1-0:61.7.0" , 11, 17, Measurement::FLOAT },
-  { "power/phase_1/instant_delivery" , "1-0:22.7.0" , 11, 17, Measurement::FLOAT },
-  { "power/phase_2/instant_delivery" , "1-0:42.7.0" , 11, 17, Measurement::FLOAT },
-  { "power/phase_3/instant_delivery" , "1-0:62.7.0" , 11, 17, Measurement::FLOAT },
+  { "power/phase_1/instant_current"  , "1-0:31.7.0" , 11, 14, Measurement::INT, Measurement::CURRENT },
+  { "power/phase_2/instant_current"  , "1-0:51.7.0" , 11, 14, Measurement::INT, Measurement::CURRENT },
+  { "power/phase_3/instant_current"  , "1-0:71.7.0" , 11, 14, Measurement::INT, Measurement::CURRENT },
+  { "power/phase_1/instant_usage"    , "1-0:21.7.0" , 11, 17, Measurement::FLOAT, Measurement::POWER },
+  { "power/phase_2/instant_usage"    , "1-0:41.7.0" , 11, 17, Measurement::FLOAT, Measurement::POWER },
+  { "power/phase_3/instant_usage"    , "1-0:61.7.0" , 11, 17, Measurement::FLOAT, Measurement::POWER },
+  { "power/phase_1/instant_delivery" , "1-0:22.7.0" , 11, 17, Measurement::FLOAT, Measurement::POWER },
+  { "power/phase_2/instant_delivery" , "1-0:42.7.0" , 11, 17, Measurement::FLOAT, Measurement::POWER },
+  { "power/phase_3/instant_delivery" , "1-0:62.7.0" , 11, 17, Measurement::FLOAT, Measurement::POWER },
   { "gas/device_id"                  , "0-1:96.1.0" , 11, 45, Measurement::STRING },
   { "gas/timestamp"                  , "0-1:24.2.1" , 11, 24, Measurement::STRING },
 };
@@ -81,6 +91,8 @@ WiFiManagerParameter mqtt_host("mqtt_host", "host", "", 40);
 WiFiManagerParameter mqtt_port("mqtt_port", "port", "1883", 6);
 WiFiManagerParameter mqtt_user("mqtt_user", "user", "", 16);
 WiFiManagerParameter mqtt_pass("mqtt_pass", "password", "", 16);
+const char checkbox[] = "type=\"checkbox\" style=\"width:10%;\"><label for\"ha_auto_config_html\">Enable</label";
+WiFiManagerParameter ha_auto_config_enable("ha_auto_config_enable", "Enable", "T", 2, checkbox);
 
 // **********************************
 // * EEPROM helpers                 *
@@ -101,6 +113,18 @@ String read_eeprom(int offset, int len)
     }
     logger.debug("Read:" + res);
     return res;
+}
+bool read_eeprom_bool(int offset)
+{
+  logger.debug("read_eeprom_bool()");
+
+  return bool(EEPROM.read(offset));
+}
+
+void write_eeprom_bool(int offset, bool value)
+{
+  logger.debug("write_eeprom_bool()");
+  EEPROM.write(offset, value);
 }
 
 void write_eeprom(int offset, int len, String value)
@@ -124,7 +148,8 @@ AppConfig loadConfig() {
     read_eeprom(CONFIG_START, 40),      // 0-39
     read_eeprom(CONFIG_START + 40, 6),  // 40-45
     read_eeprom(CONFIG_START + 46, 16), // 46-61
-    read_eeprom(CONFIG_START + 62, 16)  // 62-77
+    read_eeprom(CONFIG_START + 62, 16), // 62-77
+    read_eeprom_bool(CONFIG_START + 78) // 78
   };
   return config;
 }
@@ -134,6 +159,7 @@ void saveConfig(AppConfig config) {
   write_eeprom(CONFIG_START + 40,  6, config.mqttPort);
   write_eeprom(CONFIG_START + 46, 16, config.mqttUser);
   write_eeprom(CONFIG_START + 62, 16, config.mqttPassword);
+  write_eeprom_bool(CONFIG_START + 78, config.haAutoDiscoveryEnabled);
   logger.debug("Config saved.");
 }
 
@@ -198,14 +224,11 @@ void wifiManagerSaveConfigCallback() {
     .mqttHost = String(mqtt_host.getValue()),
     .mqttPort = String(mqtt_port.getValue()),
     .mqttUser = String(mqtt_user.getValue()),
-    .mqttPassword = String(mqtt_pass.getValue())
+    .mqttPassword = String(mqtt_pass.getValue()),
+    .haAutoDiscoveryEnabled = bool(ha_auto_config_enable.getValue())
   };
   saveConfig(newConfig);
 }
-
-// void wifiManagerSaveParamsCallback() {
-//   logger.info("[CALLBACK] wifiManagerSaveParamsCallback");
-// }
 
 void setup() {
   WiFi.mode(WIFI_STA);
@@ -226,10 +249,8 @@ void setup() {
   // wifiManager.resetSettings();
 
   // setup additional parameters when setting up wifi connection
-  // WiFiManagerParameter ha_auto_config_html("<p>Home Asisstant Auto Discovery</p>");
+  WiFiManagerParameter ha_auto_config_html("<p>Home Asisstant Auto Discovery</p>");
   // WiFiManagerParameter ha_auto_config_enable_label("<label for\"ha_auto_config_html\">Enable</label>");
-  // const char checkbox[] = "type=\"checkbox\" style=\"width:10%;\"><label for\"ha_auto_config_html\">Enable</label";
-  // WiFiManagerParameter ha_auto_config_enable("ha_auto_config_enable", "Enable", "T", 2, checkbox);
   
   // add params
   wifiManager.addParameter(&mqtt_html);
@@ -237,8 +258,8 @@ void setup() {
   wifiManager.addParameter(&mqtt_port);
   wifiManager.addParameter(&mqtt_user);
   wifiManager.addParameter(&mqtt_pass);
-  // wifiManager.addParameter(&ha_auto_config_html);
-  // wifiManager.addParameter(&ha_auto_config_enable);
+  wifiManager.addParameter(&ha_auto_config_html);
+  wifiManager.addParameter(&ha_auto_config_enable);
 
   // set callback that gets called when connecting to previous Wifi fails, and enters AP mode
   wifiManager.setAPCallback(wifiManagerConfigModeCallback);
@@ -267,7 +288,8 @@ void setup() {
   mqttPublisher = MQTTPublisher();
   mqttPublisher.start();
 
-//  test();
+   test();
+   sendHAAutoDiscoveryConfig();
 }
 
 void loop() {
@@ -289,15 +311,15 @@ void handleString(String incomingString) {
   int arraySize = sizeof(measurements)/sizeof(measurements[0]);
   
   for (i = 0; i < arraySize; i++) {
-    Measurement measurement = measurements[i];
-    String obisKey = measurement.key;
+    Measurement *measurement = &measurements[i];
+    String obisKey = measurement->key;
 
     if(incomingString.indexOf(obisKey) > -1) {
       // found
-      String value = incomingString.substring(measurement.start, measurement.end);
+      String value = incomingString.substring(measurement->start, measurement->end);
       logger.debug("DEBUG_1 " + obisKey + "=" + value);
       
-      switch (measurement.valueType) {
+      switch (measurement->valueType) {
         case Measurement::FLOAT:
           value = String(value.toFloat(), 3);
           break;
@@ -307,9 +329,123 @@ void handleString(String incomingString) {
         default:
           break;
       }
+
+      String lastValue = measurement->lastValue;
+      if (!MQTT_ONLY_SEND_NEW_VALUES || !value.equals(lastValue)) {
+        measurement->lastValue = value; // cache last value
+        logger.debug("Value="+value);
+        logger.debug("LastValue="+measurement->lastValue);
             
-      mqttPublisher.publishOnMQTT(measurement.name, value);
+        String topic = mqttPublisher.getTopic(measurement->name);
+        mqttPublisher.publishOnMQTT(topic, value);
+      }
       //break; // incoming string has been handled. No need to continue. (for now)
     }
+  }
+}
+
+unsigned int measurementsSize() {
+  return sizeof(measurements) / sizeof(measurements[0]);
+}
+
+String getLastMeasurementValue(String name) {
+  
+  for (unsigned int i = 0; i < measurementsSize(); i++) {
+    Measurement measurement = measurements[i];
+    if (measurement.name.equals(name)) {
+      logger.debug("Found:"+measurement.name+", lastValue="+measurement.lastValue);
+      return measurement.lastValue;
+    }
+  }
+  return "";
+}
+
+String getDeviceClass(Measurement m) {
+  switch(m.deviceClass) {
+    case Measurement::POWER:
+      return "power";
+    case Measurement::ENERGY: 
+      return "energy";
+    case Measurement::VOLUME:
+      return "none";
+    case Measurement::CURRENT:
+      return "current";
+    default: 
+      return "none";
+  }
+}
+
+String getUnitOfMeasurement(Measurement m) {
+  switch(m.deviceClass) {
+    case Measurement::POWER:
+      return "kW";
+    case Measurement::ENERGY: 
+      return "kWh";
+    case Measurement::VOLUME:
+      return "m3";
+    case Measurement::CURRENT:
+      return "A";
+    default: 
+      return "";
+  }
+}
+
+// Send HomeAutomation discovery
+void sendHAAutoDiscoveryConfig() {
+
+  String powerDeviceId = getLastMeasurementValue("power/device_id");
+  logger.debug("PowerDeviceId:" + powerDeviceId);
+
+  if (powerDeviceId.equals("")) {
+    logger.info("No data. Skip sending HA discovery config");
+    return;
+  }
+
+  // get device ids
+  StaticJsonDocument<210> powerDevice;  // optimal size 192
+  powerDevice["identifiers"]  = powerDeviceId;
+  powerDevice["manufacturer"] = "Kaifa";
+  powerDevice["model"]        = "304";
+  powerDevice["name"]         = "Smart Meter";
+  powerDevice["sw_version"]   = getLastMeasurementValue("version");
+  powerDevice["via_device"]   = "esp8266-dsmr";
+  logger.debug("powerDevice size="+String(measureJson(powerDevice)));
+
+  StaticJsonDocument<210> gasDevice;
+  gasDevice["identifiers"]  = getLastMeasurementValue("gas/device_id");
+  gasDevice["manufacturer"] = "Landis+Gyr";
+  gasDevice["model"]        = "E06H4056";
+  gasDevice["name"]         = "Smart Gas Meter";
+  gasDevice["sw_version"]   = "";
+  gasDevice["via_device"]   = "esp8266-dsmr";
+  logger.debug("gasDevice size="+String(measureJson(gasDevice)));
+  
+  for (unsigned int i = 0; i < measurementsSize(); i++) {
+    Measurement measurement = measurements[i];
+    if (measurement.name.equals("power/device_id") ||
+        measurement.name.equals("power/timestamp") ||
+        measurement.name.equals("gas/device_id") ||
+        measurement.name.equals("gas/timestamp") ||
+        measurement.name.equals("version")) {
+          continue; // skip json for these properties
+    }
+
+    StaticJsonDocument<400> jsonConfig; // optimalSize 384
+    String normalizedName = measurement.name;
+    normalizedName.replace('/','_');
+
+    jsonConfig["device"]              = measurement.name.startsWith("power") ? powerDevice : gasDevice;
+    jsonConfig["name"]                = measurement.key;
+    jsonConfig["unique_id"]           = normalizedName;
+    jsonConfig["state_topic"]         = mqttPublisher.getTopic(measurement.name);
+    jsonConfig["unit_of_measurement"] = getUnitOfMeasurement(measurement);
+    jsonConfig["device_class"]        = getDeviceClass(measurement);
+
+    // String json = "";
+    // serializeJson(jsonConfig, json);
+    // logger.debug("json:"+json+"--size="+measureJson(jsonConfig));
+
+    String configTopic = mqttPublisher.getConfigTopic(normalizedName);
+    mqttPublisher.publishJson(configTopic, jsonConfig);
   }
 }
