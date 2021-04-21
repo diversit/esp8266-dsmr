@@ -13,10 +13,11 @@ Logger logger = Logger("App");
 
 typedef struct {
   String mqttHost;
-  String mqttPort;
+  int mqttPort;
   String mqttUser;
   String mqttPassword;
   bool haAutoDiscoveryEnabled;
+  String haAutoDiscoveryConfig;
 } AppConfig;
 
 typedef struct {
@@ -78,11 +79,9 @@ Measurement measurements[] = {
   { "gas/timestamp"                  , "0-1:24.2.1" , 11, 24, Measurement::STRING },
 };
 
-MQTTPublisher mqttPublisher;
+MQTTPublisher* mqttPublisher;
 String incomingString = "";
 bool hasMQTT = false;
-bool hasWIFI = false;
-
 Ticker ticker;
 int LED = LED_BUILTIN;
 
@@ -93,6 +92,7 @@ WiFiManagerParameter mqtt_user("mqtt_user", "user", "", 16);
 WiFiManagerParameter mqtt_pass("mqtt_pass", "password", "", 16);
 const char checkbox[] = "type=\"checkbox\" style=\"width:10%;\"><label for\"ha_auto_config_html\">Enable</label";
 WiFiManagerParameter ha_auto_config_enable("ha_auto_config_enable", "Enable", "T", 2, checkbox);
+WiFiManagerParameter ha_auto_config_topic("ha_auto_config_topic", "Config topic", HOME_ASSISTANT_DISCOVERY_PREFIX, 16);
 
 // **********************************
 // * EEPROM helpers                 *
@@ -146,20 +146,22 @@ void write_eeprom(int offset, int len, String value)
 AppConfig loadConfig() {
   AppConfig config = {
     read_eeprom(CONFIG_START, 40),      // 0-39
-    read_eeprom(CONFIG_START + 40, 6),  // 40-45
+    read_eeprom(CONFIG_START + 40, 6).toInt(),  // 40-45
     read_eeprom(CONFIG_START + 46, 16), // 46-61
     read_eeprom(CONFIG_START + 62, 16), // 62-77
-    read_eeprom_bool(CONFIG_START + 78) // 78
+    read_eeprom_bool(CONFIG_START + 78), // 78
+    read_eeprom(CONFIG_START + 79, 16) // 79-94
   };
   return config;
 }
 
 void saveConfig(AppConfig config) {
   write_eeprom(CONFIG_START     , 40, config.mqttHost);
-  write_eeprom(CONFIG_START + 40,  6, config.mqttPort);
+  write_eeprom(CONFIG_START + 40,  6, String(config.mqttPort));
   write_eeprom(CONFIG_START + 46, 16, config.mqttUser);
   write_eeprom(CONFIG_START + 62, 16, config.mqttPassword);
   write_eeprom_bool(CONFIG_START + 78, config.haAutoDiscoveryEnabled);
+  write_eeprom(CONFIG_START + 79, 16, config.haAutoDiscoveryConfig);
   logger.debug("Config saved.");
 }
 
@@ -219,13 +221,16 @@ void wifiManagerSaveConfigCallback() {
   logger.info("mqtt port:" + String(mqtt_port.getValue()));
   logger.info("mqtt user:" + String(mqtt_user.getValue()));
   logger.info("mqtt pass:" + String(mqtt_pass.getValue()));
+  logger.info("ha auto discovery:" + String(ha_auto_config_enable.getValue()));
+  logger.info("ha auto discovery topic:" + String(ha_auto_config_topic.getValue()));
 
   AppConfig newConfig = {
     .mqttHost = String(mqtt_host.getValue()),
-    .mqttPort = String(mqtt_port.getValue()),
+    .mqttPort = String(mqtt_port.getValue()).toInt(),
     .mqttUser = String(mqtt_user.getValue()),
     .mqttPassword = String(mqtt_pass.getValue()),
-    .haAutoDiscoveryEnabled = bool(ha_auto_config_enable.getValue())
+    .haAutoDiscoveryEnabled = bool(ha_auto_config_enable.getValue()),
+    .haAutoDiscoveryConfig   = String(ha_auto_config_topic.getValue())
   };
   saveConfig(newConfig);
 }
@@ -246,7 +251,7 @@ void setup() {
 
   // Setup Wifi
   WiFiManager wifiManager;
-  // wifiManager.resetSettings();
+  wifiManager.resetSettings(); // reset since otherwise no way to change Wifi settings
 
   // setup additional parameters when setting up wifi connection
   WiFiManagerParameter ha_auto_config_html("<p>Home Asisstant Auto Discovery</p>");
@@ -260,6 +265,7 @@ void setup() {
   wifiManager.addParameter(&mqtt_pass);
   wifiManager.addParameter(&ha_auto_config_html);
   wifiManager.addParameter(&ha_auto_config_enable);
+  wifiManager.addParameter(&ha_auto_config_topic);
 
   // set callback that gets called when connecting to previous Wifi fails, and enters AP mode
   wifiManager.setAPCallback(wifiManagerConfigModeCallback);
@@ -283,18 +289,21 @@ void setup() {
   logger.info("Config Port:" + String(config.mqttPort));
   logger.info("Config User:" + String(config.mqttUser));
   logger.info("Config Pass:" + String(config.mqttPassword));
+  logger.info("HA Auto Discovery Enabled:" + String(config.haAutoDiscoveryEnabled));
+  logger.info("HA Auto Discovery Topic:" + String(config.haAutoDiscoveryConfig));
 
   // Setup MQTT
-  mqttPublisher = MQTTPublisher();
-  mqttPublisher.start();
+  String clientId = String(ESP.getChipId(), HEX);
+  mqttPublisher = new MQTTPublisher(config.mqttHost, config.mqttPort, config.mqttUser, config.mqttPassword, clientId);
+  mqttPublisher->start();
 
    test();
-   sendHAAutoDiscoveryConfig();
+   sendHAAutoDiscoveryConfig(String(config.haAutoDiscoveryConfig));
 }
 
 void loop() {
   
-  mqttPublisher.handle();
+  mqttPublisher->handle();
   yield();
 
   // If serial received, read until newline
@@ -336,8 +345,8 @@ void handleString(String incomingString) {
         logger.debug("Value="+value);
         logger.debug("LastValue="+measurement->lastValue);
             
-        String topic = mqttPublisher.getTopic(measurement->name);
-        mqttPublisher.publishOnMQTT(topic, value);
+        String topic = mqttPublisher->getTopic(measurement->name);
+        mqttPublisher->publishOnMQTT(topic, value);
       }
       //break; // incoming string has been handled. No need to continue. (for now)
     }
@@ -391,7 +400,7 @@ String getUnitOfMeasurement(Measurement m) {
 }
 
 // Send HomeAutomation discovery
-void sendHAAutoDiscoveryConfig() {
+void sendHAAutoDiscoveryConfig(String configTopicPrefix) {
 
   String powerDeviceId = getLastMeasurementValue("power/device_id");
   logger.debug("PowerDeviceId:" + powerDeviceId);
@@ -437,7 +446,7 @@ void sendHAAutoDiscoveryConfig() {
     jsonConfig["device"]              = measurement.name.startsWith("power") ? powerDevice : gasDevice;
     jsonConfig["name"]                = measurement.key;
     jsonConfig["unique_id"]           = normalizedName;
-    jsonConfig["state_topic"]         = mqttPublisher.getTopic(measurement.name);
+    jsonConfig["state_topic"]         = mqttPublisher->getTopic(measurement.name);
     jsonConfig["unit_of_measurement"] = getUnitOfMeasurement(measurement);
     jsonConfig["device_class"]        = getDeviceClass(measurement);
 
@@ -445,7 +454,7 @@ void sendHAAutoDiscoveryConfig() {
     // serializeJson(jsonConfig, json);
     // logger.debug("json:"+json+"--size="+measureJson(jsonConfig));
 
-    String configTopic = mqttPublisher.getConfigTopic(normalizedName);
-    mqttPublisher.publishJson(configTopic, jsonConfig);
+    String configTopic = mqttPublisher->getConfigTopic(configTopicPrefix, normalizedName);
+    mqttPublisher->publishJson(configTopic, jsonConfig);
   }
 }

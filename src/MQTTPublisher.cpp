@@ -4,9 +4,13 @@
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-MQTTPublisher::MQTTPublisher(String clientId)
+MQTTPublisher::MQTTPublisher(String mqttHost, int mqttPort, String mqttUser, String mqttPass, String clientId)
 {
   randomSeed(micros());
+  _mqttHost = mqttHost;
+  _mqttPort = mqttPort;
+  _mqttUser = mqttUser;
+  _mqttPass = mqttPass;
   _clientId = clientId;
   logger = Logger("MQTTPublisher");
   logger.debug("ClientId:" + _clientId);
@@ -24,23 +28,23 @@ String MQTTPublisher::getTopic(String name)
   return String(MQTT_PREFIX) + '/' + _clientId + '/' + name;
 }
 
-String MQTTPublisher::getConfigTopic(String name)
+String MQTTPublisher::getConfigTopic(String autoDiscoveryPrefix, String name)
 {
-  return HOME_ASSISTANT_DISCOVERY_PREFIX + "/sensor/" + String(MQTT_PREFIX) + "-" + _clientId + "/" + name;
+  return autoDiscoveryPrefix + "/sensor/" + String(MQTT_PREFIX) + "-" + _clientId + "/" + name;
 }
 
 bool MQTTPublisher::reconnect()
 {
   lastConnectionAttempt = millis();
   
-  logger.debug("Attempt connection to server: " + String(MQTT_HOST_NAME));
+  logger.debug("Attempt connection to server: " + _mqttHost + ":" + String(_mqttPort));
 
   // Attempt to connect
   bool clientConnected;
-  if (String(MQTT_USER_NAME).length())
+  if (String(_mqttUser).length())
   {
     logger.info("Connecting with credientials");
-    clientConnected = client.connect(_clientId.c_str(), MQTT_USER_NAME, MQTT_PASSWORD);
+    clientConnected = client.connect(_clientId.c_str(), _mqttUser.c_str(), _mqttPass.c_str());
   }
   else
   {
@@ -59,7 +63,8 @@ bool MQTTPublisher::reconnect()
 
     return true;
   } else {
-    logger.warn("failed, rc=" + client.state());
+    logger.debug("NOT CONNECTED!");
+    logger.warn("failed, rc=" + String(client.state()));
   }
 
   return false;
@@ -68,7 +73,7 @@ bool MQTTPublisher::reconnect()
 
 void MQTTPublisher::start()
 {
-  if (String(MQTT_HOST_NAME).length() == 0 || MQTT_PORT == 0)
+  if (_mqttHost.length() == 0 || _mqttPort == 0)
   {
     logger.warn("disabled. No hostname or port set.");
     return; //not configured
@@ -76,7 +81,7 @@ void MQTTPublisher::start()
 
   logger.debug("enabled. Connecting.");
 
-  client.setServer(MQTT_HOST_NAME, MQTT_PORT);
+  client.setServer(_mqttHost.c_str(), _mqttPort);
   reconnect();
   isStarted = true;
 }
