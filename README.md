@@ -1,5 +1,26 @@
 # esp8266-dsmr
 
+## New features
+
+- WifiManager to set wifi and MQTT settings
+- HA Discovery config feature. Is only send once on startup
+- Only sends changed values
+
+## Wanted list
+
+- Send HA config once or twice a day
+- More 'event-driven' approach to prevent code continues even though Wifi or Mqtt is not connected
+- Better visualize state via LED
+- Config not properly stored/restored after reset
+- Button to 'reset' the device which re-enables reconfiguring device
+- Webpage to display/edit config
+- Better seperate into modules
+- Publish binaries
+- Auto-release setup?
+- Better MQTT lib?
+  - ability to send with QoS 1
+  - set last will to detect device disconnected
+
 > 16-04-2021: Based on Bram2202's [esp8266-dsmr](https://github.com/bram2202/esp8266-dsmr).
 > - Extended number of supported properties to include all property values send by a [Kaifa 304](https://www.liander.nl/sites/default/files/Meters-Handleidingen-elektriciteit-Kaifa-uitgebreid.pdf) smart meter. Now in a simple structure and easy to extend.
 > - Changed MQTT structure to `esp-dsmr/<device-id>/<property-name>`. The property name can include additional `/`. E.g. for `1-0:31.7.0` (L1 instant usage), the MQTT topic is `esp-dsmr/<device-id>/power/phase_1/instant_usage`.
