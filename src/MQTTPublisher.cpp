@@ -14,7 +14,7 @@ MQTTPublisher::MQTTPublisher(String mqttHost, int mqttPort, String mqttUser, Str
   _clientId = clientId;
   logger = Logger("MQTTPublisher");
   logger.debug("ClientId:" + _clientId);
-  client.setBufferSize(400); // increase buffer size for json
+  client.setBufferSize(500); // increase buffer size for json (max lijkt 455)
 }
 
 MQTTPublisher::~MQTTPublisher()
@@ -30,7 +30,7 @@ String MQTTPublisher::getTopic(String name)
 
 String MQTTPublisher::getConfigTopic(String autoDiscoveryPrefix, String name)
 {
-  return autoDiscoveryPrefix + "/sensor/" + String(MQTT_PREFIX) + "-" + _clientId + "/" + name;
+  return autoDiscoveryPrefix + "/sensor/" + String(MQTT_PREFIX) + "-" + _clientId + "/" + name + "/config";
 }
 
 bool MQTTPublisher::reconnect()
@@ -81,7 +81,10 @@ void MQTTPublisher::start()
 
   logger.debug("enabled. Connecting.");
 
-  client.setServer(_mqttHost.c_str(), _mqttPort);
+  uint16_t port = _mqttPort;
+  logger.debug("Port =" + String(port));
+
+  client.setServer(_mqttHost.c_str(), port);
   reconnect();
   isStarted = true;
 }

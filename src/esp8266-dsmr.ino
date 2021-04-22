@@ -224,9 +224,10 @@ void wifiManagerSaveConfigCallback() {
   logger.info("ha auto discovery:" + String(ha_auto_config_enable.getValue()));
   logger.info("ha auto discovery topic:" + String(ha_auto_config_topic.getValue()));
 
+  String portNr = String(mqtt_port.getValue());
   AppConfig newConfig = {
     .mqttHost = String(mqtt_host.getValue()),
-    .mqttPort = String(mqtt_port.getValue()).toInt(),
+    .mqttPort = portNr.length() == 0 ? 0 : portNr.toInt(),
     .mqttUser = String(mqtt_user.getValue()),
     .mqttPassword = String(mqtt_pass.getValue()),
     .haAutoDiscoveryEnabled = bool(ha_auto_config_enable.getValue()),
@@ -234,6 +235,8 @@ void wifiManagerSaveConfigCallback() {
   };
   saveConfig(newConfig);
 }
+
+AppConfig config = {};
 
 void setup() {
   WiFi.mode(WIFI_STA);
@@ -284,7 +287,7 @@ void setup() {
 
   digitalWrite(LED, LOW); // led on
 
-  AppConfig config = loadConfig();
+  config = loadConfig();
   logger.info("Config Host:" + String(config.mqttHost));
   logger.info("Config Port:" + String(config.mqttPort));
   logger.info("Config User:" + String(config.mqttUser));
@@ -297,14 +300,31 @@ void setup() {
   mqttPublisher = new MQTTPublisher(config.mqttHost, config.mqttPort, config.mqttUser, config.mqttPassword, clientId);
   mqttPublisher->start();
 
-   test();
-   sendHAAutoDiscoveryConfig(String(config.haAutoDiscoveryConfig));
 }
+
+boolean runTest = false;
+boolean isConfigSent = false;
 
 void loop() {
   
   mqttPublisher->handle();
   yield();
+
+  // Send HA config
+  if (config.haAutoDiscoveryEnabled && !isConfigSent) {
+    logger.info("Sending HA Config");
+    sendHAAutoDiscoveryConfig(String(config.haAutoDiscoveryConfig));
+    isConfigSent = true;
+  }
+
+  // if (!runTest) {
+  //   // test();
+  //   AppConfig config = loadConfig();
+  //   sendHAAutoDiscoveryConfig(String(config.haAutoDiscoveryConfig));
+  //   delay(2000);
+  //   test();
+  //   runTest = true;
+  // }
 
   // If serial received, read until newline
   if (Serial.available() > 0) {
@@ -376,11 +396,11 @@ String getDeviceClass(Measurement m) {
     case Measurement::ENERGY: 
       return "energy";
     case Measurement::VOLUME:
-      return "none";
+      return "";
     case Measurement::CURRENT:
       return "current";
     default: 
-      return "none";
+      return "";
   }
 }
 
@@ -405,10 +425,11 @@ void sendHAAutoDiscoveryConfig(String configTopicPrefix) {
   String powerDeviceId = getLastMeasurementValue("power/device_id");
   logger.debug("PowerDeviceId:" + powerDeviceId);
 
-  if (powerDeviceId.equals("")) {
-    logger.info("No data. Skip sending HA discovery config");
-    return;
-  }
+  // weet niet meer waarom ik dit erin heb gezet. Nu disablen
+  // if (powerDeviceId.equals("")) {
+  //   logger.info("No data. Skip sending HA discovery config");
+  //   return;
+  // }
 
   // get device ids
   StaticJsonDocument<210> powerDevice;  // optimal size 192
@@ -425,7 +446,7 @@ void sendHAAutoDiscoveryConfig(String configTopicPrefix) {
   gasDevice["manufacturer"] = "Landis+Gyr";
   gasDevice["model"]        = "E06H4056";
   gasDevice["name"]         = "Smart Gas Meter";
-  gasDevice["sw_version"]   = "";
+  gasDevice["sw_version"]   = "N/A";
   gasDevice["via_device"]   = "esp8266-dsmr";
   logger.debug("gasDevice size="+String(measureJson(gasDevice)));
   
@@ -444,11 +465,14 @@ void sendHAAutoDiscoveryConfig(String configTopicPrefix) {
     normalizedName.replace('/','_');
 
     jsonConfig["device"]              = measurement.name.startsWith("power") ? powerDevice : gasDevice;
-    jsonConfig["name"]                = measurement.key;
-    jsonConfig["unique_id"]           = normalizedName;
+    jsonConfig["name"]                = normalizedName;
+    jsonConfig["unique_id"]           = normalizedName + "_" + measurement.key;
     jsonConfig["state_topic"]         = mqttPublisher->getTopic(measurement.name);
     jsonConfig["unit_of_measurement"] = getUnitOfMeasurement(measurement);
-    jsonConfig["device_class"]        = getDeviceClass(measurement);
+    String deviceClass = getDeviceClass(measurement);
+    if (deviceClass.length() > 0) {
+      jsonConfig["device_class"]      = deviceClass;
+    }
 
     // String json = "";
     // serializeJson(jsonConfig, json);
