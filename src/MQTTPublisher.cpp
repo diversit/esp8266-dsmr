@@ -4,6 +4,8 @@
 WiFiClient espClient;
 PubSubClient client(espClient);
 
+boolean retainMessage = true;
+
 MQTTPublisher::MQTTPublisher(String mqttHost, int mqttPort, String mqttUser, String mqttPass, String clientId)
 {
   randomSeed(micros());
@@ -19,7 +21,7 @@ MQTTPublisher::MQTTPublisher(String mqttHost, int mqttPort, String mqttUser, Str
 
 MQTTPublisher::~MQTTPublisher()
 {
-  client.publish(getTopic("status").c_str(), "offline");
+  client.publish(getTopic("status").c_str(), "offline", retainMessage);
   client.disconnect();
 }
 
@@ -44,7 +46,15 @@ bool MQTTPublisher::reconnect()
   if (String(_mqttUser).length())
   {
     logger.info("Connecting with credientials");
-    clientConnected = client.connect(_clientId.c_str(), _mqttUser.c_str(), _mqttPass.c_str());
+    clientConnected = client.connect(
+      _clientId.c_str(), 
+      _mqttUser.c_str(), 
+      _mqttPass.c_str(),
+      getTopic("status").c_str(), // will topic
+      0,    // will QoS
+      retainMessage, // will retain
+      "offline"   // status 'off'
+    );
   }
   else
   {
@@ -59,7 +69,7 @@ bool MQTTPublisher::reconnect()
     hasMQTT = true;
 
     // Once connected, publish an announcement...
-    client.publish(getTopic("status").c_str(), "online");
+    client.publish(getTopic("status").c_str(), "online", retainMessage);
 
     return true;
   } else {
@@ -108,7 +118,7 @@ void MQTTPublisher::handle()
 bool MQTTPublisher::publishOnMQTT(String topic, String msg)
 {
   logger.debug("Publish to '" + topic + "':" + msg);
-  auto retVal =  client.publish(topic.c_str(), msg.c_str());
+  auto retVal =  client.publish(topic.c_str(), msg.c_str(), retainMessage);
   yield();
   return retVal;
 }
@@ -117,8 +127,9 @@ bool MQTTPublisher::publishJson(String topic, const JsonDocument& json)
 {
   logger.debug("Publish json to '" + topic);
   char buffer[400]; // max size
-  size_t size = serializeJson(json, buffer);
-  auto retval = client.publish(topic.c_str(), buffer, size);
+  serializeJson(json, buffer);
+  // size_t size = serializeJson(json, buffer);
+  auto retval = client.publish(topic.c_str(), buffer, retainMessage);
   logger.debug("retval:"+String(retval));
   yield();
   return retval;
